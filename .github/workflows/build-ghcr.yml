@@ -7,9 +7,8 @@ on:
         description: Docker target to build
         required: true
         type: choice
-        default: light
+        default: server
         options:
-          - light
           - server
           - full
 
