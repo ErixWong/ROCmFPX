@@ -318,6 +318,7 @@ static void llama_tensor_dequantize_impl(
 
 static bool tensor_allows_quantization(const llama_model_quantize_params * params, llm_arch arch, const ggml_tensor * tensor) {
     // trivial checks first -- no string ops needed
+    if (params->only_copy)       return false;
 
     // quantize only 2D and 3D tensors (experts)
     if (ggml_n_dims(tensor) < 2) return false;
@@ -426,7 +427,6 @@ static ggml_type tensor_type_fallback(quantize_state_impl & qs, const ggml_tenso
             case GGML_TYPE_Q3_0_ROCMFPX:
             case GGML_TYPE_Q2_0_ROCMFPX:
             case GGML_TYPE_Q6_0_ROCMFPX:
-            case GGML_TYPE_Q7_0_ROCMFPX:
             case GGML_TYPE_Q8_0_ROCMFPX: return_type = GGML_TYPE_Q8_0; break;
             case GGML_TYPE_Q4_K:    return_type = GGML_TYPE_Q5_0;   break;
             case GGML_TYPE_Q5_K:    return_type = GGML_TYPE_Q5_1;   break;
@@ -504,18 +504,13 @@ static ggml_type llama_tensor_get_type_impl(quantize_state_impl & qs, ggml_type 
     auto rocmfpx_is_q8_family = [&] (llama_ftype ftype) {
         return ftype == LLAMA_FTYPE_MOSTLY_Q8_0_ROCMFPX || rocmfpx_is_q8_agent(ftype);
     };
-    auto rocmfpx_is_q7_family = [] (llama_ftype ftype) {
-        return ftype == LLAMA_FTYPE_MOSTLY_Q7_0_ROCMFPX;
-    };
     auto rocmfpx_is_family = [&] (llama_ftype ftype) {
-        return rocmfpx_is_q3_family(ftype) || rocmfpx_is_q6_family(ftype) ||
-               rocmfpx_is_q7_family(ftype) || rocmfpx_is_q8_family(ftype);
+        return rocmfpx_is_q3_family(ftype) || rocmfpx_is_q6_family(ftype) || rocmfpx_is_q8_family(ftype);
     };
     auto rocmfpx_sensitive_tensor_type = [&] (llama_ftype ftype) {
         switch (ftype) {
             case LLAMA_FTYPE_MOSTLY_Q3_0_ROCMFPX: return GGML_TYPE_Q4_0_ROCMFP4_FAST;
             case LLAMA_FTYPE_MOSTLY_Q6_0_ROCMFPX: return GGML_TYPE_Q6_0_ROCMFPX;
-            case LLAMA_FTYPE_MOSTLY_Q7_0_ROCMFPX: return GGML_TYPE_Q7_0_ROCMFPX;
             case LLAMA_FTYPE_MOSTLY_Q6_0_ROCMFPX_LEAN: return GGML_TYPE_Q6_0_ROCMFPX;
             case LLAMA_FTYPE_MOSTLY_Q6_0_ROCMFPX_AGENT_LEAN: return GGML_TYPE_Q6_K;
             case LLAMA_FTYPE_MOSTLY_Q8_0_ROCMFPX: return GGML_TYPE_Q8_0_ROCMFPX;
@@ -1031,10 +1026,10 @@ static ggml_type llama_tensor_get_type(quantize_state_impl & qs, const llama_mod
         return params->output_tensor_type;
     }
 
-    ggml_type new_type = params->only_copy ? tensor->type : default_type;
+    ggml_type new_type = default_type;
 
     // get more optimal quantization type based on the tensor shape, layer, etc.
-    if (!params->pure && (params->only_copy || ggml_is_quantized(default_type))) {
+    if (!params->pure && ggml_is_quantized(default_type)) {
         // if the user provided tensor types - use those
         bool manual = false;
         if (!qs.tensor_type_patterns.empty()) {
@@ -1053,7 +1048,7 @@ static ggml_type llama_tensor_get_type(quantize_state_impl & qs, const llama_mod
         }
 
         // if not manual - use the standard logic for choosing the quantization type based on the selected mixture
-        if (!manual && !params->only_copy) {
+        if (!manual) {
             new_type = llama_tensor_get_type_impl(qs, new_type, tensor, params->ftype, tm.category);
 
             // Precision floor for draft-acceptance-critical projections: never
@@ -1205,7 +1200,6 @@ ggml_type llama_ftype_get_default_type(llama_ftype ftype) {
         case LLAMA_FTYPE_MOSTLY_Q3_0_ROCMFPX: return GGML_TYPE_Q3_0_ROCMFPX;
         case LLAMA_FTYPE_MOSTLY_Q2_0_ROCMFPX: return GGML_TYPE_Q2_0_ROCMFPX;
         case LLAMA_FTYPE_MOSTLY_Q6_0_ROCMFPX: return GGML_TYPE_Q6_0_ROCMFPX;
-        case LLAMA_FTYPE_MOSTLY_Q7_0_ROCMFPX: return GGML_TYPE_Q7_0_ROCMFPX;
         case LLAMA_FTYPE_MOSTLY_Q6_0_ROCMFPX_LEAN: return GGML_TYPE_Q6_0_ROCMFPX;
         case LLAMA_FTYPE_MOSTLY_Q8_0_ROCMFPX: return GGML_TYPE_Q8_0_ROCMFPX;
         case LLAMA_FTYPE_MOSTLY_Q3_0_ROCMFPX_AGENT: return GGML_TYPE_Q3_0_ROCMFPX;

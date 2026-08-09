@@ -9,11 +9,31 @@ Vulkan kernels.
 > hardware, drivers, model, prompt, and quantization recipe; use BF16/F16 sources
 > for quality comparisons.
 
-The first reproducible DualView/Ornith release remains tagged
-`dualview-ornith-35b-v1`; this branch forward-ports that runtime onto the
-maintained ROCmFPX/llama.cpp line.
+## Disclosure
 
-## ROCmFP2 On Main
+**#AD #AMDAI**
+
+A huge thank you to AMD for providing the hardware that powers the ongoing
+development of ROCmFPX.
+
+The development system provided by AMD includes:
+
+- AMD Ryzen™ Threadripper™ 9980X
+- AMD Radeon™ AI PRO R9700 GPU
+- 128 GB ECC DDR5 Memory
+- 2 TB NVMe SSD
+
+This hardware enables me to continue developing, optimizing, benchmarking, and
+testing ROCmFPX for the community. AMD provided this hardware as part of a
+creator partnership. All development, benchmarks, code, testing, documentation,
+and opinions shared in this repository are my own.
+
+Thank you, AMD, for supporting the continued advancement of open AI development
+on Radeon hardware.
+
+**#AD #AMDAI**
+
+## Developer Update — ROCmFP2 Lands On Main (July 2026)
 
 ROCmFP2 is now available on the canonical `main` branch as
 `Q2_0_ROCMFPX`. It uses a 2.50-bpw block layout with an S40
@@ -21,9 +41,10 @@ ROCmFP2 is now available on the canonical `main` branch as
 model storage and memory traffic compared with ROCmFP4. The 2.50-bpw figure
 describes native ROCmFP2 weight blocks; complete GGUF BPW can be higher because
 files also contain metadata and tensors stored in other types. The latest
-Vulkan dense and routed/MoE Q8_1 decode kernels are included on `main`.
+Vulkan dense and routed/MoE Q8_1 decode kernels landed through
+[PR #42](https://github.com/charlie12345/ROCmFPX/pull/42).
 
-[Download the current `main` source (ZIP)](https://github.com/ciru-ai/ROCmFPX/archive/refs/heads/main.zip)
+[Download the current `main` source (ZIP)](https://github.com/charlie12345/ROCmFPX/archive/refs/heads/main.zip)
 or use the clone command in [Quick Start](#quick-start-strix-halo--gfx1151).
 Older tags and previously built binaries do not receive these updates
 automatically.
@@ -103,7 +124,7 @@ script using the [Clone And Build](#clone-and-build) table.
 
 ```bash
 # 1. Get the code (canonical main branch)
-git clone https://github.com/ciru-ai/ROCmFPX.git
+git clone https://github.com/charlie12345/ROCmFPX.git
 cd ROCmFPX && git checkout main
 
 # 2. Build for Strix Halo
@@ -182,73 +203,6 @@ quant. Use a **`*_COHERENT` / `*_AGENT`** preset if the model does tool-calling,
 JSON, or coding. Always compare against your BF16/F16 source for real quality
 checks.
 
-## DualView: Q7 decode, Q8 prefill, one model
-
-DualView is a new execution architecture for local LLM inference. A model keeps
-compact signed Q7 codes as its source of truth, then exposes those exact integer
-values to the GPU in two different physical forms:
-
-- **Decode:** packed `Q7_0_ROCMFPX`, reducing the bytes read for every generated
-  token.
-- **Prefill:** an exact signed-Q8 compute view, opening the native INT8
-  dot-product and WMMA path for wide prompt processing.
-
-The Q7-to-Q8 view change is lossless with respect to the stored Q7 code: it
-sign-extends the integer and reuses the same scale. It does not claim that Q7
-itself is lossless relative to BF16.
-
-The first public model is
-**Ornith1.0-35B-CIRU-DUALVIEW-FPX7+Q8-MTP**. Its retained quality-max target
-measured **1,236.156 tok/s at PP4096** on a Radeon 8060S / `gfx1151`, ahead of
-both the original Q7S8 recipe and the official Q8_0 control under the matched
-full-model protocol.
-
-- [Learn DualView visually](https://llm.ciru.ai/dualview)
-- [Architecture, build, and run guide](docs/DUALVIEW.md)
-- [Complete Ornith 35B research record](docs/DUALVIEW-ORNITH-35B-RESEARCH.md)
-
-### Fastest validated install path: Ubuntu + Strix Halo
-
-Install a current ROCm Core SDK first, then:
-
-```bash
-sudo apt update
-sudo apt install -y build-essential cmake git ninja-build pkg-config \
-  libcurl4-openssl-dev
-
-git clone --branch dualview --single-branch \
-  https://github.com/ciru-ai/ROCmFPX.git
-cd ROCmFPX
-JOBS="$(nproc)" ./scripts/build-strix-dualview.sh
-```
-
-Run the integrated Ornith target with its official Q8 MTP head:
-
-```bash
-export GGML_ROCM_GFX1151_Q7_Q8_VIEW=no-output
-# Recommended for large UMA loads:
-export GGML_HIP_ENABLE_UNIFIED_MEMORY=1
-# Only for an older ROCm stack that does not identify the APU as gfx1151:
-# export HSA_OVERRIDE_GFX_VERSION=11.5.1
-
-./build-strix-dualview/bin/llama-server \
-  -m /path/to/Ornith1.0-35b-CIRU-DUALVIEW-FPX7+Q8-MTP.gguf \
-  -a Ornith1.0-35b-CIRU-DUALVIEW-FPX7+Q8-MTP \
-  --host 127.0.0.1 --port 8080 --jinja \
-  --reasoning on --reasoning-format deepseek --reasoning-budget -1 \
-  -dev ROCm0 -sm none -ngl 999 -fa on \
-  -n 16384 -c 131072 -b 2048 -ub 512 -t 16 -tb 16 \
-  -ctk f16 -ctv f16 --parallel 1 --metrics --mmap --no-repack \
-  --no-cache-prompt --no-context-shift -fit off \
-  --spec-type draft-mtp --spec-draft-p-min 0.50 \
-  --spec-draft-n-max 7 -ctkd f16 -ctvd f16
-```
-
-For short prompts, depth 6 was the stronger general mean. For 16K–64K prompts,
-depth 7 was the retained decode profile. For prompt-heavy requests with short
-answers, disable MTP (`--spec-type none`) so speculative-prefill overhead does
-not dominate wall time.
-
 ## What Is ROCmFPX?
 
 ROCmFPX is a family of GGUF model-weight quants:
@@ -259,7 +213,6 @@ ROCmFPX is a family of GGUF model-weight quants:
 | ROCmFP3 | `Q3_0_ROCMFPX` | low-bit ROCmFPX weight format | development preview |
 | ROCmFP4 | `Q4_0_ROCMFP4`, `Q4_0_ROCMFP4_FAST` | promoted 4-bit ROCm family baseline | optimized and validated on tested Strix Halo paths |
 | ROCmFP6 | `Q6_0_ROCMFPX` | middle quality/size ROCmFPX weight format | development preview |
-| ROCmFP7 | `Q7_0_ROCMFPX` | 7.50 bpw signed-code format and DualView source | validated for the released DualView/Ornith profile |
 | ROCmFP8 | `Q8_0_ROCMFPX` | high-quality ROCmFPX reference format | development preview |
 
 Agent-specific versions are also available:
@@ -280,11 +233,10 @@ kernel coverage.
 This work builds on `llama.cpp`; upstream authors and contributors retain credit
 under the MIT license. See `AUTHORS`, `LICENSE`, and `THIRD_PARTY_NOTICES.md`.
 
-Ciru maintains this repository and its ROCmFPX integration. Earlier ROCmFP4 and
-ROCmFPX work remains credited through the repository history and project
-notices.
+ROCmFP4 and ROCmFPX experiment work in this repository is maintained by
+`charlie12345` / `caf`.
 
-Major contributions in this tree include:
+Additional ROCmFPX contributors:
 
 - `ciru-ai`: ROCmFP2 core format/runtime and frozen codebook; ROCmFP3 Vulkan
   matvec/dequant speed path.
@@ -371,7 +323,7 @@ ROCmFP4.
 ## Clone And Build
 
 ```bash
-git clone https://github.com/ciru-ai/ROCmFPX.git
+git clone https://github.com/charlie12345/ROCmFPX.git
 cd ROCmFPX
 ```
 

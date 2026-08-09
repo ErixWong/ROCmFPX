@@ -732,14 +732,6 @@ static const struct ggml_type_traits type_traits[GGML_TYPE_COUNT] = {
         .to_float                 = (ggml_to_float_t) rocmfpx_dequantize_row_fp8,
         .from_float_ref           = (ggml_from_float_t) rocmfpx_quantize_row_fp8_ref,
     },
-    [GGML_TYPE_Q7_0_ROCMFPX] = {
-        .type_name                = "q7_0_rocmfpx",
-        .blck_size                = QK_ROCMFP7,
-        .type_size                = sizeof(block_rocmfp7),
-        .is_quantized             = true,
-        .to_float                 = (ggml_to_float_t) rocmfpx_dequantize_row_fp7,
-        .from_float_ref           = (ggml_from_float_t) rocmfpx_quantize_row_fp7_ref,
-    },
     [GGML_TYPE_Q4_1] = {
         .type_name                = "q4_1",
         .blck_size                = QK4_1,
@@ -1524,8 +1516,6 @@ enum ggml_type ggml_ftype_to_ggml_type(enum ggml_ftype ftype) {
             wtype = GGML_TYPE_Q6_0_ROCMFPX; break;
         case GGML_FTYPE_MOSTLY_Q8_0_ROCMFPX:
             wtype = GGML_TYPE_Q8_0_ROCMFPX; break;
-        case GGML_FTYPE_MOSTLY_Q7_0_ROCMFPX:
-            wtype = GGML_TYPE_Q7_0_ROCMFPX; break;
         case GGML_FTYPE_MOSTLY_Q4_1:          wtype = GGML_TYPE_Q4_1;  break;
         case GGML_FTYPE_MOSTLY_Q1_0:          wtype = GGML_TYPE_Q1_0;  break;
         case GGML_FTYPE_MOSTLY_Q5_0:          wtype = GGML_TYPE_Q5_0;  break;
@@ -8041,9 +8031,6 @@ size_t ggml_quantize_chunk(
             break;
         case GGML_TYPE_Q8_0_ROCMFPX:
             result = rocmfpx_quantize_fp8(src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix);
-            break;
-        case GGML_TYPE_Q7_0_ROCMFPX:
-            result = rocmfpx_quantize_fp7(src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix);
             break;
         case GGML_TYPE_TURBO3_0:
             GGML_ASSERT(n_per_row % 128 == 0);
