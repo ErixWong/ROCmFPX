@@ -108,8 +108,19 @@ option(LLAMA_BUILD_TESTS            "llama: build tests"                        
 option(LLAMA_BUILD_TOOLS            "llama: build tools"                                                                            ${LLAMA_STANDALONE})
 option(LLAMA_BUILD_EXAMPLES         "llama: build examples"                                                                         ${LLAMA_STANDALONE})
 option(LLAMA_BUILD_SERVER           "llama: build server example"                                                                   ${LLAMA_STANDALONE})
-option(LLAMA_BUILD_WEBUI            "llama: build the embedded Web UI for server"                                                   ON)
-option(LLAMA_USE_PREBUILT_WEBUI     "llama: use prebuilt WebUI from HF Bucket when available (requires LLAMA_BUILD_WEBUI=ON)"       ON)
+option(LLAMA_BUILD_UI               "llama: build the embedded Web UI for server"                                                   ON)
+option(LLAMA_USE_PREBUILT_UI        "llama: use prebuilt UI from HF Bucket when available (requires LLAMA_BUILD_UI=ON)"             ON)
+# Backward compat: forward the deprecated LLAMA_*WEBUI* option names to the new
+# LLAMA_*UI* ones. This is done at the top level so that sub-directories
+# (tools/server) observe the same value as tools/ui.
+if (DEFINED LLAMA_BUILD_WEBUI)
+    set(LLAMA_BUILD_UI ${LLAMA_BUILD_WEBUI} CACHE BOOL "llama: build the embedded Web UI for server" FORCE)
+    message(DEPRECATION "LLAMA_BUILD_WEBUI is deprecated, use LLAMA_BUILD_UI instead")
+endif()
+if (DEFINED LLAMA_USE_PREBUILT_WEBUI)
+    set(LLAMA_USE_PREBUILT_UI ${LLAMA_USE_PREBUILT_WEBUI} CACHE BOOL "llama: use prebuilt UI from HF Bucket when available (requires LLAMA_BUILD_UI=ON)" FORCE)
+    message(DEPRECATION "LLAMA_USE_PREBUILT_WEBUI is deprecated, use LLAMA_USE_PREBUILT_UI instead")
+endif()
 option(LLAMA_TOOLS_INSTALL          "llama: install tools"                                                                          ${LLAMA_TOOLS_INSTALL_DEFAULT})
 option(LLAMA_TESTS_INSTALL          "llama: install tests"                                                                          ON)
 
