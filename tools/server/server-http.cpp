@@ -1,6 +1,7 @@
 #include "common.h"
 #include "server-http.h"
 #include "server-common.h"
+#include "ui.h"
 
 #include <cpp-httplib/httplib.h>
 
@@ -9,14 +10,7 @@
 #include <future>
 #include <string>
 #include <thread>
-
-#ifdef LLAMA_BUILD_WEBUI
-// auto generated files (see README.md for details)
-#include "index.html.hpp"
-#include "bundle.js.hpp"
-#include "bundle.css.hpp"
-#include "loading.html.hpp"
-#endif
+#include <unordered_set>
 
 //
 // HTTP implementation using cpp-httplib
@@ -179,17 +173,28 @@ bool server_http_context::init(const common_params & params) {
     // Middlewares
     //
 
-    auto middleware_validate_api_key = [api_keys = params.api_keys](const httplib::Request & req, httplib::Response & res) {
-        static const std::unordered_set<std::string> public_endpoints = {
+    // Frontend paths - all embedded UI assets
+    static const std::unordered_set<std::string> frontend_paths = []() {
+        std::unordered_set<std::string> paths { "/" };
+        for (const llama_ui_asset & a : llama_ui_get_assets()) {
+            paths.insert("/" + a.name);
+        }
+        return paths;
+    }();
+
+    // Public endpoints - API routes plus all embedded UI assets
+    static const std::unordered_set<std::string> public_endpoints = []() {
+        std::unordered_set<std::string> endpoints {
             "/health",
             "/v1/health",
             "/models",
             "/v1/models",
-            "/",
-            "/index.html",
-            "/bundle.js",
-            "/bundle.css",
         };
+        endpoints.insert(frontend_paths.begin(), frontend_paths.end());
+        return endpoints;
+    }();
+
+    auto middleware_validate_api_key = [api_keys = params.api_keys](const httplib::Request & req, httplib::Response & res) {
 
         // If API key is not set, skip validation
         if (api_keys.empty()) {
@@ -238,17 +243,11 @@ bool server_http_context::init(const common_params & params) {
     };
 
     auto middleware_server_state = [this](const httplib::Request & req, httplib::Response & res) {
-        (void)req; // suppress unused parameter warning when LLAMA_BUILD_WEBUI is not defined
         bool ready = is_ready.load();
         if (!ready) {
-#ifdef LLAMA_BUILD_WEBUI
-            auto tmp = string_split<std::string>(req.path, '.');
-            if (req.path == "/" || (tmp.size() > 0 && tmp.back() == "html")) {
-                res.status = 503;
-                res.set_content(reinterpret_cast<const char*>(loading_html), loading_html_len, "text/html; charset=utf-8");
-                return false;
+            if (frontend_paths.count(req.path)) {
+                return true; // frontend asset, allow it to load and show "loading"
             }
-#endif
             // no endpoints are allowed to be accessed when the server is not ready
             // this is to prevent any data races or inconsistent states
             res.status = 503;
@@ -317,23 +316,85 @@ bool server_http_context::init(const common_params & params) {
                 return 1;
             }
         } else {
-#ifdef LLAMA_BUILD_WEBUI
-            // using embedded static index.html
-            srv->Get(params.api_prefix + "/", [](const httplib::Request & /*req*/, httplib::Response & res) {
-                // COEP and COOP headers, required by pyodide (python interpreter)
-                res.set_header("Cross-Origin-Embedder-Policy", "require-corp");
-                res.set_header("Cross-Origin-Opener-Policy", "same-origin");
-                res.set_content(reinterpret_cast<const char*>(index_html), index_html_len, "text/html; charset=utf-8");
-                return false;
-            });
-            srv->Get(params.api_prefix + "/bundle.js", [](const httplib::Request & /*req*/, httplib::Response & res) {
-                res.set_content(reinterpret_cast<const char*>(bundle_js), bundle_js_len, "application/javascript; charset=utf-8");
-                return false;
-            });
-            srv->Get(params.api_prefix + "/bundle.css", [](const httplib::Request & /*req*/, httplib::Response & res) {
-                res.set_content(reinterpret_cast<const char*>(bundle_css), bundle_css_len, "text/css; charset=utf-8");
-                return false;
-            });
+#if defined(LLAMA_UI_HAS_ASSETS)
+            static auto handle_gzip_header = [](const httplib::Request & req, httplib::Response & res) {
+                if (!llama_ui_use_gzip()) {
+                    // no gzip build, skip
+                    return true;
+                }
+                if (req.get_header_value("Accept-Encoding").find("gzip") == std::string::npos) {
+                    res.status = 415; // unsupported media type
+                    res.set_content("Error: gzip is not supported by this browser", "text/plain");
+                    return false;
+                } else {
+                    res.set_header("Content-Encoding", "gzip");
+                }
+                return true;
+            };
+
+            auto serve_asset_cached = [](const std::string & name, bool isolation) {
+                return [name, isolation](const httplib::Request & req, httplib::Response & res) {
+                    if (!handle_gzip_header(req, res)) {
+                        return true; // returns error message
+                    }
+                    const llama_ui_asset * a = llama_ui_find_asset(name);
+                    if (!a) { res.status = 404; return false; }
+                    res.set_header("ETag", a->etag);
+                    if (const std::string & inm = req.get_header_value("If-None-Match");
+                        !inm.empty() && (inm == a->etag || inm == std::string("W/") + a->etag)) {
+                        res.status = 304;
+                        return false;
+                    }
+                    if (isolation) {
+                        // COEP and COOP headers, required by pyodide (python interpreter)
+                        res.set_header("Cross-Origin-Embedder-Policy", "require-corp");
+                        res.set_header("Cross-Origin-Opener-Policy",   "same-origin");
+                    }
+                    res.set_header("Cache-Control", "public, max-age=31536000, immutable");
+                    res.set_content(reinterpret_cast<const char*>(a->data), a->size, a->type.c_str());
+                    return false;
+                };
+            };
+
+            auto serve_asset_nocache = [](const std::string & name) {
+                return [name](const httplib::Request & req, httplib::Response & res) {
+                    if (!handle_gzip_header(req, res)) {
+                        return true; // returns error message
+                    }
+                    const llama_ui_asset * a = llama_ui_find_asset(name);
+                    if (!a) {
+                        res.status = 404;
+                        return false;
+                    }
+                    res.set_header("Cache-Control", "no-cache");
+                    res.set_content(reinterpret_cast<const char*>(a->data), a->size, a->type.c_str());
+                    return false;
+                };
+            };
+
+            // main index file
+            srv->Get(params.api_prefix + "/",           serve_asset_cached("index.html", true));
+            srv->Get(params.api_prefix + "/index.html", serve_asset_cached("index.html", true));
+
+            // All remaining assets registered directly from the embedded asset table.
+            // PWA revalidation files (sw.js, manifest, version.json) use no-cache;
+            // everything else is immutable.
+            static const std::unordered_set<std::string> no_cache_names = {
+                "sw.js",
+                "manifest.webmanifest",
+                "_app/version.json",
+                "build.json"
+            };
+
+            for (const auto & a : llama_ui_get_assets()) {
+                if (a.name == "index.html") continue;  // served at "/" and "/index.html" above
+                if (no_cache_names.count(a.name)) {
+                    SRV_DBG("serve nocache for %s\n", a.name.c_str());
+                    srv->Get(params.api_prefix + "/" + a.name, serve_asset_nocache(a.name));
+                } else {
+                    srv->Get(params.api_prefix + "/" + a.name, serve_asset_cached(a.name, false));
+                }
+            }
 #endif
         }
     }
