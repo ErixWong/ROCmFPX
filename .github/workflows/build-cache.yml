@@ -2,8 +2,11 @@ name: Build Actions Cache
 
 on:
   workflow_dispatch: # allows manual triggering
-  schedule:
-    - cron: '0 * * * *'
+  # fork 上停用定时触发：Actions 缓存按仓库隔离，fork 没有上游的缓存命名空间，
+  # 每小时一次几乎必然 cache-miss（ROCm SDK / toolchain / openvino 各重下数 GB）。
+  # 需要时手动 Run workflow 即可。上游 ciru-ai/ROCmFPX 的 cron 不受影响。
+  # schedule:
+  #   - cron: '0 * * * *'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref && github.ref || github.run_id }}

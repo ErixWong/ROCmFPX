@@ -2,8 +2,10 @@ name: Update Winget Package
 
 on:
   workflow_dispatch: # allows manual triggering
-  schedule:
-    - cron: '28 5 * * *' # Update every day at 5:28 UTC
+  # fork 上停用定时（作业本体已有 `if: github.repository_owner == 'ggml-org'` 护栏，
+  # 但每次调度仍会起一个空跑作业）。
+  # schedule:
+  #   - cron: '28 5 * * *' # Update every day at 5:28 UTC
 
 jobs:
   update:
